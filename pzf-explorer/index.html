@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PZF Explorer — Probabilistic Zero Forcing on any graph</title>
+<meta name="description" content="Build any graph and explore Probabilistic Zero Forcing: exact expected steps, symmetry-reduced state space, and a live simulation.">
+
+<link rel="stylesheet" href="css/styles.css">
+
+<!-- visualization libraries (pre-bundled UMD) -->
+<script src="https://unpkg.com/three@0.147.0/build/three.min.js"></script>
+<script src="https://unpkg.com/three-spritetext@1.8.1/dist/three-spritetext.min.js"></script>
+<script src="https://unpkg.com/3d-force-graph@1.71.4/dist/3d-force-graph.min.js"></script>
+<script src="https://unpkg.com/force-graph@1.43.3/dist/force-graph.min.js"></script>
+<script src="https://unpkg.com/fraction.js@4.3.7/fraction.min.js"></script>
+</head>
+<body>
+
+<div id="app">
+  <!-- ===================== SIDEBAR ===================== -->
+  <aside id="hud">
+    <p class="kicker">Probabilistic Zero Forcing</p>
+    <h1>State-Space Explorer</h1>
+    <p class="sub">Build any graph, mark the starting (blue) vertices, and compute the exact expected number of forcing steps — with a symmetry-reduced state-space map and a live simulation.</p>
+
+    <div class="block">
+      <div class="tabs">
+        <button id="tab-build" class="active" data-view="build">&#9312; Build graph</button>
+        <button id="tab-explore" data-view="explore">&#9313; Explore</button>
+      </div>
+    </div>
+
+    <!-- BUILD controls -->
+    <div id="build-controls">
+      <div class="block">
+        <div class="label">Start from a preset</div>
+        <div class="row tight">
+          <select id="preset">
+            <option value="">&mdash; choose &mdash;</option>
+            <option value="path">Path</option>
+            <option value="cycle">Cycle</option>
+            <option value="grid">Grid</option>
+            <option value="prism">Prism</option>
+            <option value="complete">Complete</option>
+            <option value="star">Star</option>
+            <option value="wheel">Wheel</option>
+          </select>
+          <input id="preset-a" class="num" type="number" min="2" max="12" value="3" title="size">
+          <input id="preset-b" class="num" type="number" min="2" max="6" value="3" title="size 2 (grid)" style="display:none">
+          <button id="preset-go" class="btn ghost" style="width:auto">Load</button>
+        </div>
+      </div>
+
+      <div class="block">
+        <div class="label">Edit tool</div>
+        <div class="toolgrid">
+          <button class="tool active" data-tool="add"><span class="ic">&plus;</span>Add</button>
+          <button class="tool" data-tool="edge"><span class="ic">&frasl;</span>Edge</button>
+          <button class="tool" data-tool="move"><span class="ic">&#10021;</span>Move</button>
+          <button class="tool seed" data-tool="seed"><span class="ic">&#9673;</span>Seed</button>
+          <button class="tool erase" data-tool="erase"><span class="ic">&times;</span>Erase</button>
+        </div>
+        <div class="btnrow" style="margin-top:8px">
+          <button id="clear" class="btn ghost">Clear</button>
+          <button id="save" class="btn ghost">Save</button>
+          <button id="load" class="btn ghost">Load file</button>
+          <button id="share" class="btn ghost">Share</button>
+        </div>
+        <input id="file" type="file" accept="application/json" style="display:none">
+      </div>
+
+      <div class="block">
+        <div class="label"><span>Engine</span><span id="vcount">0 vertices &middot; 0 seed</span></div>
+        <label class="toggle"><input type="checkbox" id="mc-mode"> Monte-Carlo estimate (for large graphs)</label>
+        <div class="btnrow" style="margin-top:10px">
+          <button id="compute" class="btn primary">Compute &#9656;</button>
+        </div>
+        <div class="note">Exact engine handles up to ~16&ndash;18 vertices comfortably (state space is 2&#7515;). Above that, use Monte-Carlo.</div>
+      </div>
+    </div>
+
+    <!-- EXPLORE controls -->
+    <div id="explore-controls" style="display:none">
+      <div class="block">
+        <div class="label">Node colour</div>
+        <div class="seg">
+          <button id="mode-struct" class="active">Structure</button>
+          <button id="mode-steps">Expected steps</button>
+        </div>
+        <div id="legend"></div>
+      </div>
+      <div class="block">
+        <label class="toggle"><input type="checkbox" id="path-toggle"> Highlight most-likely path</label>
+      </div>
+      <div class="rule"></div>
+      <div class="block">
+        <div class="label">Results</div>
+        <div class="stats" id="stats"></div>
+      </div>
+      <div class="note" style="margin-top:14px">Click any node to open the live simulation from that state.</div>
+    </div>
+  </aside>
+
+  <!-- ===================== STAGE ===================== -->
+  <main id="stage">
+    <section id="view-build" class="view active">
+      <canvas id="editor"></canvas>
+      <div class="stage-hint" id="build-hint"></div>
+    </section>
+
+    <section id="view-explore" class="view">
+      <div id="graph"></div>
+      <div class="empty" id="explore-empty">Build a graph and press <b style="color:var(--sky)">&nbsp;Compute&nbsp;</b> to see its state-space.</div>
+    </section>
+
+    <div id="computing">
+      <div class="spinner"></div>
+      <div class="computing-msg">Computing exact state-space&hellip;</div>
+    </div>
+  </main>
+</div>
+
+<!-- ===================== SIM MODAL ===================== -->
+<div id="overlay">
+  <div id="modal">
+    <div id="m-head">
+      <h3 id="m-title">Live simulation</h3>
+      <button id="close">&times;</button>
+    </div>
+    <div id="m-body">
+      <div id="sim">
+        <div class="sim-legend">
+          <div class="lr"><span class="dot" style="color:#38bdf8;background:#38bdf8"></span> forced (blue)</div>
+          <div class="pressure-bar"></div>
+          <div class="pressure-ends"><span>stalled</span><span>likely</span></div>
+          <div class="lr" style="color:var(--faint)">white-node colour = P(force this step)</div>
+        </div>
+      </div>
+      <aside id="breakdown">
+        <div class="bd-head">Probability breakdown</div>
+        <div class="bd-sub">P(white vertex turns blue this step), as exact fractions</div>
+        <div id="bd-list"></div>
+      </aside>
+    </div>
+    <div id="m-foot">
+      <button class="mbtn primary" id="sim-step">Step &rarr;</button>
+      <button class="mbtn ghost" id="sim-auto">Auto-play</button>
+      <button class="mbtn ghost" id="sim-reset">Reset</button>
+      <div class="readout">
+        <div class="read steps"><div class="v" id="step-counter">0</div><div class="k">Steps taken</div></div>
+        <div class="read exp"><div class="v" id="exp-counter">0.00</div><div class="k">E[steps] left</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="js/editor.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
